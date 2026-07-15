@@ -28,6 +28,7 @@ class SnippetOut(SnippetCreate):
     created_at: datetime
     is_public: bool = False
     share_slug: Optional[str] = None
+    view_count: int = 0
     class Config:
         from_attributes = True
 
@@ -47,5 +48,14 @@ class PublicSnippetOut(BaseModel):
     code: str
     tags: Optional[str] = ""
     created_at: datetime
+    class Config:
+        from_attributes = True
+
+class SnippetOut(SnippetCreate):
+    id: int
+    created_at: datetime
+    is_public: bool = False
+    share_slug: Optional[str] = None
+    view_count: int = 0
     class Config:
         from_attributes = True

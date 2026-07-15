@@ -1,27 +1,30 @@
-from fastapi import Request, HTTPException, status
-from .redis_client import redis_client
+import time
+from fastapi import Request, HTTPException, status, Depends
+from .redis_client import get_redis
 
 
 def rate_limiter(max_requests: int, window_seconds: int):
     """
-    Returns a FastAPI dependency that limits a client to `max_requests`
-    within `window_seconds`, keyed by client IP.
-    Usage: Depends(rate_limiter(5, 60))  -> 5 requests per 60 seconds
+    Sliding-window-log limiter using a Redis sorted set.
+    Usage: Depends(rate_limiter(5, 60)) -> 5 requests per rolling 60s
     """
-    def dependency(request: Request):
+    def dependency(request: Request, redis_conn=Depends(get_redis)):
         client_ip = request.client.host
         key = f"ratelimit:{request.url.path}:{client_ip}"
+        now = time.time()
+        window_start = now - window_seconds
 
-        current = redis_client.incr(key)
-        if current == 1:
-            # first request in this window — set the expiry
-            redis_client.expire(key, window_seconds)
+        pipe = redis_conn.pipeline()
+        pipe.zremrangebyscore(key, 0, window_start)
+        pipe.zadd(key, {str(now): now})
+        pipe.zcard(key)
+        pipe.expire(key, window_seconds)
+        _, _, current_count, _ = pipe.execute()
 
-        if current > max_requests:
-            ttl = redis_client.ttl(key)
+        if current_count > max_requests:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many requests. Try again in {ttl} seconds."
+                detail=f"Too many requests. Try again in {window_seconds} seconds."
             )
 
     return dependency
