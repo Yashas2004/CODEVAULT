@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+# backend/app/models.py
+import secrets
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -17,8 +19,15 @@ class Snippet(Base):
     title = Column(String, nullable=False)
     language = Column(String, index=True)
     code = Column(Text, nullable=False)
-    tags = Column(String)  # comma-separated for simplicity
+    tags = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     owner_id = Column(Integer, ForeignKey("users.id"))
     owner = relationship("User", back_populates="snippets")
     search_vector = Column(TSVECTOR)
+    is_public = Column(Boolean, default=False, nullable=False)
+    share_slug = Column(String, unique=True, index=True, nullable=True)
+
+
+def generate_share_slug() -> str:
+    """URL-safe, unguessable identifier for public sharing (~2^96 possibilities)."""
+    return secrets.token_urlsafe(12)

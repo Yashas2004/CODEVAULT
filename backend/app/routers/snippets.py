@@ -7,6 +7,7 @@ from ..database import get_db
 from ..redis_client import redis_client
 from fastapi import HTTPException
 from ..rate_limit import rate_limiter
+from ..models import generate_share_slug
 
 router = APIRouter(prefix="/snippets", tags=["snippets"])
 
@@ -51,6 +52,39 @@ def update_snippet(snippet_id: int, snippet: schemas.SnippetCreate,
     db.refresh(existing)
     bump_cache_version(user.id)
     return existing
+
+@router.post("/{snippet_id}/share", response_model=schemas.ShareResponse)
+def create_share_link(snippet_id: int, db: Session = Depends(get_db),
+                       user: models.User = Depends(auth.get_current_user)):
+    snippet = db.query(models.Snippet).filter(
+        models.Snippet.id == snippet_id,
+        models.Snippet.owner_id == user.id
+    ).first()
+    if not snippet:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+
+    if not snippet.share_slug:
+        snippet.share_slug = generate_share_slug()
+    snippet.is_public = True
+    db.commit()
+    db.refresh(snippet)
+    return snippet
+
+
+@router.delete("/{snippet_id}/share", response_model=schemas.ShareResponse)
+def revoke_share_link(snippet_id: int, db: Session = Depends(get_db),
+                       user: models.User = Depends(auth.get_current_user)):
+    snippet = db.query(models.Snippet).filter(
+        models.Snippet.id == snippet_id,
+        models.Snippet.owner_id == user.id
+    ).first()
+    if not snippet:
+        raise HTTPException(status_code=404, detail="Snippet not found")
+
+    snippet.is_public = False
+    db.commit()
+    db.refresh(snippet)
+    return snippet
 
 @router.get("/", response_model=schemas.PaginatedSnippets)
 def list_snippets(q: str = "", cursor: int | None = None, limit: int = 20,
