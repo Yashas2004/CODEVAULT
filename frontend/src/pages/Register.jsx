@@ -5,11 +5,16 @@ import { useNavigate, Link } from "react-router-dom";
 export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
+  const passwordsMatch = password.length > 0 && password === confirmPassword;
+  const canSubmit = email.length > 0 && passwordsMatch;
+
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!canSubmit) return;
     setError("");
     try {
       await api.post("/users/register", { email, password });
@@ -42,8 +47,26 @@ export default function Register() {
             placeholder="Password"
             value={password} onChange={e => setPassword(e.target.value)}
           />
+          <input
+            className={`border bg-surface2 text-ink rounded px-3 py-2 w-full text-sm outline-none focus:ring-2 placeholder:text-comment ${
+              confirmPassword.length > 0
+                ? passwordsMatch
+                  ? "border-success/50 focus:ring-success/50"
+                  : "border-danger/50 focus:ring-danger/50"
+                : "border-comment/20 focus:ring-accent/50"
+            }`}
+            type="password"
+            placeholder="Confirm Password"
+            value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+          />
+          {confirmPassword.length > 0 && !passwordsMatch && (
+            <p className="text-danger text-xs font-mono">Passwords don't match</p>
+          )}
           {error && <p className="text-danger text-xs font-mono">{error}</p>}
-          <button className="bg-accent text-paper rounded px-4 py-2 w-full text-sm font-semibold hover:brightness-110 transition">
+          <button
+            disabled={!canSubmit}
+            className="bg-accent text-paper rounded px-4 py-2 w-full text-sm font-semibold hover:brightness-110 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
+          >
             Create Account
           </button>
         </form>

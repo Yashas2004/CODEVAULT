@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import api from "../api";
 import { useDebounce } from "../hooks/useDebounce";
 import { languageColor } from "../utils/languageColor";
+import LoadingTransition from "../components/LoadingTransition";
+import { useNavigate } from "react-router-dom";
 
 function SkeletonCard() {
   return (
@@ -17,6 +19,7 @@ function SkeletonCard() {
 }
 
 export default function Snippets() {
+  const navigate = useNavigate();
   const [snippets, setSnippets] = useState([]);
   const [q, setQ] = useState("");
   const debouncedQ = useDebounce(q, 300);
@@ -31,6 +34,15 @@ export default function Snippets() {
   const [editingId, setEditingId] = useState(null);
   const [shareUrl, setShareUrl] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [toasts, setToasts] = useState([]);
+  const [showEntryTransition, setShowEntryTransition] = useState(true);
+
+  const showToast = (message) => {
+    const id = crypto.randomUUID();
+    setToasts(prev => [...prev, { id, message }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -53,14 +65,26 @@ export default function Snippets() {
 
   useEffect(() => { load(); }, [debouncedQ]);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setShowEntryTransition(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    navigate("/login");
+  };
+
   const handleDelete = async (id) => {
-    setDeletingId(id);
+    const snapshot = snippets;
+    setSnippets(prev => prev.filter(s => s.id !== id));
+    if (editingId === id) cancelEdit();
+
     try {
       await api.delete(`/snippets/${id}`);
-      if (editingId === id) cancelEdit();
-      await load();
-    } finally {
-      setDeletingId(null);
+    } catch {
+      setSnippets(snapshot);
+      showToast("Couldn't delete that snippet — restored.");
     }
   };
 
@@ -84,14 +108,43 @@ export default function Snippets() {
     e.preventDefault();
     if (submitting) return;
     setSubmitting(true);
-    try {
-      if (editingId) {
-        await api.put(`/snippets/${editingId}`, form);
-      } else {
-        await api.post("/snippets/", form);
-      }
+
+    if (editingId) {
+      const editedId = editingId;
+      const previous = snippets.find(s => s.id === editedId);
+      setSnippets(prev => prev.map(s => (s.id === editedId ? { ...s, ...form } : s)));
       cancelEdit();
-      await load();
+
+      try {
+        await api.put(`/snippets/${editedId}`, form);
+      } catch {
+        setSnippets(prev => prev.map(s => (s.id === editedId ? previous : s)));
+        showToast("Couldn't save your edit — reverted.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const optimisticSnippet = {
+      ...form, id: tempId, is_public: false, share_slug: null,
+      created_at: new Date().toISOString(),
+    };
+    setSnippets(prev => [optimisticSnippet, ...prev]);
+    const savedForm = form;
+    const keyUsed = idempotencyKey;
+    cancelEdit();
+    setIdempotencyKey(crypto.randomUUID());
+
+    try {
+      const res = await api.post("/snippets/", savedForm, {
+        headers: { "Idempotency-Key": keyUsed },
+      });
+      setSnippets(prev => prev.map(s => (s.id === tempId ? res.data : s)));
+    } catch {
+      setSnippets(prev => prev.filter(s => s.id !== tempId));
+      showToast("Couldn't create that snippet — please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -102,18 +155,25 @@ export default function Snippets() {
       setShareUrl(`${window.location.origin}/s/${snippet.share_slug}`);
       return;
     }
-    const res = await api.post(`/snippets/${snippet.id}/share`);
-    setSnippets(prev => prev.map(s =>
-      s.id === snippet.id ? { ...s, is_public: true, share_slug: res.data.share_slug } : s
-    ));
-    setShareUrl(`${window.location.origin}/s/${res.data.share_slug}`);
+    try {
+      const res = await api.post(`/snippets/${snippet.id}/share`);
+      setSnippets(prev => prev.map(s =>
+        s.id === snippet.id ? { ...s, is_public: true, share_slug: res.data.share_slug } : s
+      ));
+      setShareUrl(`${window.location.origin}/s/${res.data.share_slug}`);
+    } catch {
+      showToast("Couldn't create a share link.");
+    }
   };
 
   const handleUnshare = async (snippet) => {
-    await api.delete(`/snippets/${snippet.id}/share`);
-    setSnippets(prev => prev.map(s =>
-      s.id === snippet.id ? { ...s, is_public: false } : s
-    ));
+    setSnippets(prev => prev.map(s => (s.id === snippet.id ? { ...s, is_public: false } : s)));
+    try {
+      await api.delete(`/snippets/${snippet.id}/share`);
+    } catch {
+      setSnippets(prev => prev.map(s => (s.id === snippet.id ? { ...s, is_public: true } : s)));
+      showToast("Couldn't unshare — restored.");
+    }
   };
 
   const copyLink = () => {
@@ -122,17 +182,29 @@ export default function Snippets() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  if (showEntryTransition) {
+    return <LoadingTransition />;
+  }
+
   return (
     <div className="min-h-screen bg-paper grid grid-cols-1 lg:grid-cols-[28%_72%]">
 
       {/* LEFT PANEL */}
       <aside className="lg:h-screen lg:sticky lg:top-0 lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-comment/15 p-6 space-y-6">
-        <div>
-          <div className="flex items-center gap-2 font-mono font-semibold text-xl">
-            <span className="text-accent">&lt;/&gt;</span>
-            <span className="text-ink">CodeVault</span>
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 font-mono font-bold text-5xl ">
+              <span className="text-accent ">&lt;/&gt;</span>
+              <span className="text-ink tracking-tight ">CodeVault</span>
+            </div>
+            <p className="text-xs font-mono text-comment mt-1.5">Store All your Code Snippets here </p>
           </div>
-          <p className="text-xs font-mono text-comment mt-1">personal snippet vault</p>
+          <button
+            onClick={handleLogout}
+            className="text-xs font-mono text-comment hover:text-danger border border-comment/20 hover:border-danger/40 rounded px-2 py-1 transition-colors"
+          >
+            Logout
+          </button>
         </div>
 
         <div className="text-xs font-mono text-comment">
@@ -209,7 +281,7 @@ export default function Snippets() {
           {snippets.map((s, i) => (
             <div
               key={s.id}
-              className="group relative bg-surface border border-comment/15 rounded-lg overflow-hidden transition-shadow hover:shadow-[0_0_0_1px_theme(colors.accent),0_0_20px_-4px_theme(colors.accent)] animate-[fadeIn_0.25s_ease-out]"
+              className={`group relative bg-surface border border-comment/15 rounded-lg overflow-hidden transition-shadow hover:shadow-[0_0_0_1px_theme(colors.accent),0_0_20px_-4px_theme(colors.accent)] animate-[fadeIn_0.25s_ease-out] ${typeof s.id === "string" ? "opacity-60" : ""}`}
               style={{ animationDelay: `${Math.min(i, 8) * 30}ms`, animationFillMode: "backwards" }}
             >
               <div
@@ -226,6 +298,11 @@ export default function Snippets() {
                     >
                       {s.language}
                     </span>
+                    {s.is_public && (
+                      <span className="ml-2 font-mono text-xs text-comment">
+                        👁 {s.view_count} view{s.view_count !== 1 ? "s" : ""}
+                      </span>
+                    )}
                   </div>
                   <div className="flex gap-3 text-xs font-mono opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => handleEditClick(s)} className="text-accent">Edit</button>
@@ -301,6 +378,19 @@ export default function Snippets() {
               Close
             </button>
           </div>
+        </div>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 space-y-2">
+          {toasts.map(t => (
+            <div
+              key={t.id}
+              className="bg-surface border border-danger/40 text-ink text-sm font-mono px-4 py-2 rounded-lg shadow-lg animate-[fadeIn_0.2s_ease-out]"
+            >
+              {t.message}
+            </div>
+          ))}
         </div>
       )}
     </div>
