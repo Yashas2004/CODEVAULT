@@ -1,3 +1,14 @@
+/* frontend/src/index.css — replace entirely */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+}
+
+/* frontend/src/index.css — add this at the bottom, keep everything else the same */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

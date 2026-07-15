@@ -1,7 +1,9 @@
+// frontend/src/App.jsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Snippets from "./pages/Snippets";
+import SharedSnippet from "./pages/SharedSnippet";
 
 function App() {
   return (
@@ -11,6 +13,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/snippets" element={<Snippets />} />
+        <Route path="/s/:slug" element={<SharedSnippet />} />
       </Routes>
     </BrowserRouter>
   );
